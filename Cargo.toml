@@ -1,6 +1,6 @@
 [package]
 name = "spectate_lib"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2018"
 authors = ["Roland Rodriguez <rrrodzilla@protonmail.com>"]
 description = "A logging target for env_logger for use by the Spectate client"

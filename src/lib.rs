@@ -4,6 +4,7 @@ pub(crate) mod spectate {
 pub use env_logger::Target;
 //use env_logger::Target;
 pub use log;
+use log::trace;
 use spectate::spectate_client::SpectateClient;
 use spectate::LogEntry;
 use std::thread;
@@ -109,6 +110,7 @@ impl Spectate {
         let runtime_thread = thread::spawn(move || {
             //get access to our mutex
             let runtime = runtime.lock().expect("lock runtime");
+            trace!("Connecting to grpc server");
             runtime.block_on(async {
                 //connect to the grpc server
                 SpectateClient::connect("http://[::1]:50051")
