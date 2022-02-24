@@ -35,6 +35,7 @@ impl Default for Spectate {
 impl Spectate {
     fn new() -> Self {
         let (sender, receiver) = channel();
+        let _ = env_logger::try_init();
 
         //wrap the receiver, runtime and client so we can move it across threads
         let receiver = Arc::new(Mutex::new(receiver));
