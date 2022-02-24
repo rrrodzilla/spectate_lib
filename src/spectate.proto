@@ -1,0 +1,15 @@
+syntax = "proto3";
+package spectate_proto;
+
+service Spectate {
+    rpc SendRecords (stream LogEntry) returns (SendRecordsReply);
+}
+
+message LogEntry {
+    bytes log = 1;
+}
+
+
+message SendRecordsReply {
+    int32 Result = 1;
+}
