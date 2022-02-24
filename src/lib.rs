@@ -1,5 +1,8 @@
-pub use env_logger;
-use env_logger::Target;
+pub(crate) mod spectate {
+    tonic::include_proto!("spectate_proto");
+}
+pub use env_logger::Target;
+//use env_logger::Target;
 pub use log;
 use spectate::spectate_client::SpectateClient;
 use spectate::LogEntry;
@@ -29,11 +32,13 @@ impl Default for Spectate {
 }
 
 impl Spectate {
-    pub fn new() -> Self {
+    fn new() -> Self {
         let (sender, receiver) = channel();
 
-        //wrap the receiver and runtime so we can move it into a new thread
+        //wrap the receiver, runtime and client so we can move it across threads
         let receiver = Arc::new(Mutex::new(receiver));
+        //we set the thread priority of the internal tokio runtime lower so as not the interfere
+        //with the host application's main thread
         let runtime = Arc::new(Mutex::new(
             tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -43,7 +48,10 @@ impl Spectate {
                 .expect("Creating spectate_runtime_thread"),
         ));
 
-        let client = Arc::new(Mutex::new(Spectate::init(&runtime).expect("Couldn't init")));
+        //initialize the client connection and wrap it for cross thread calls
+        let client = Arc::new(Mutex::new(
+            Spectate::client_init(&runtime).expect("Couldn't initialize connection"),
+        ));
 
         Self {
             sender,
@@ -53,52 +61,63 @@ impl Spectate {
         }
     }
 
-    //unforunately for now we have to flush at the end of the main application
-    pub fn flush(&self) {
+    //spawns a thread to receive data from the transport channel and then stream to the existing
+    //grpc client connection
+    fn flush(&self) {
+        //clone to pass into new thread
         let receiver = self.receiver.clone();
         let client = self.client.clone();
         let runtime = self.runtime.clone();
-        let hot_loop = thread::spawn(move || {
+
+        //spawn a thread to stream in the background
+        let send_thread = thread::spawn(move || {
+            //lock the thread safe objects so we can work with them in this thread
             let receiver = receiver.lock().expect("");
             let runtime = runtime.lock().expect("");
-
-            //loop {
             let mut client = client.lock().expect("");
-            let data: Vec<u8> = receiver.try_iter().collect();
-            let entries = vec![LogEntry { log: data }];
-            if entries.len() > 0 {
+
+            //create log data for transport based on the potential contents of the channel
+            let entries = vec![LogEntry {
+                data: receiver.try_iter().collect(),
+            }];
+            //only make a send request if there is something to send
+            if !entries.is_empty() {
+                //construct the future
                 let send_future = client.send_records(futures_util::stream::iter(entries));
+                //send it
                 runtime.block_on(async move {
                     send_future.await.expect("Couldn't send records");
                 });
             }
-            //}
         });
-        hot_loop.join().expect("join hot loop");
-    }
-    pub fn target() -> Target {
-        let spectate = Spectate::new();
-        //before we send back the Target
-        Target::Pipe(Box::new(LogTarget(spectate)))
+        //join the thread so we can continue
+        send_thread.join().expect("join send_thread");
     }
 
-    fn init(
+    pub fn target() -> Target {
+        //Prepare a Target to provide to env_logger
+        Target::Pipe(Box::new(LogTarget(Spectate::new())))
+    }
+
+    //Spawns a background thread to create a grpc client, then connects to the grpc server and
+    //returns the client when the thread is joined
+    fn client_init(
         runtime: &Arc<Mutex<Runtime>>,
     ) -> Result<SpectateClient<Channel>, Box<dyn std::error::Error>> {
-        //clone our reciever to move across threads
+        //clone our runtime to move across threads
         let runtime = runtime.clone();
         let runtime_thread = thread::spawn(move || {
             //get access to our mutex
             let runtime = runtime.lock().expect("lock runtime");
             runtime.block_on(async {
-                //println!("CONNECTED");
-
+                //connect to the grpc server
                 SpectateClient::connect("http://[::1]:50051")
                     .await
                     .expect("couldn't connect")
             })
         });
 
+        //join the background thread so we can return the client
         let client = runtime_thread.join().expect("Couldn't join runtime_thread");
         Ok(client)
     }
@@ -111,21 +130,22 @@ impl LogTarget {}
 
 impl io::Write for LogTarget {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        //do we need to send to a channel here or can we simply block on a call?
+        //read all chars
         for char in buf {
+            //send through channel
             self.0.sender.send(*char).ok();
         }
-        self.0.flush();
+        //flush the channel after each buffer send
+        self.flush()?;
+
         Ok(buf.len())
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        //flush
+        self.0.flush();
         Ok(())
     }
-}
-
-pub(crate) mod spectate {
-    tonic::include_proto!("spectate_proto");
 }
 
 /// The default worker priority (value passed to `libc::setpriority`);

@@ -1,7 +1,15 @@
 [package]
 name = "spectate_lib"
-version = "0.1.0"
+version = "0.0.1"
 edition = "2021"
+authors = ["Roland Rodriguez <rrrodzilla@protonmail.com>"]
+description = "A logging target for env_logger for use by the Spectate client"
+repository = "https://github.com/rrrodzilla/spectate_lib"
+license = "MIT OR Apache-2.0"
+keywords = ["logging", "env_logger", "log", "logger"]
+categories = ["development-tools", "development-tools::debugging", "debugging"]
+documentation = "https://docs.rs/spectate_lib/latest/spectate_lib/"
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -6,7 +6,7 @@ service Spectate {
 }
 
 message LogEntry {
-    bytes log = 1;
+    bytes data = 1;
 }
 
 
