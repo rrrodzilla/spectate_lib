@@ -35,7 +35,7 @@ impl Spectate {
         //wrap the receiver and runtime so we can move it into a new thread
         let receiver = Arc::new(Mutex::new(receiver));
         let runtime = Arc::new(Mutex::new(
-            tokio::runtime::Builder::new_current_thread()
+            tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
                 .thread_name("spectate_runtime_thread")
                 .on_thread_start(move || set_current_thread_priority(WORKER_PRIORITY))
@@ -58,24 +58,28 @@ impl Spectate {
         let receiver = self.receiver.clone();
         let client = self.client.clone();
         let runtime = self.runtime.clone();
-        let mut client = client.lock().expect("");
-        let receiver = receiver.lock().expect("");
-        let runtime = runtime.lock().expect("");
-        runtime.block_on(async {
-            //            loop {
-            //println!("loop");
+        let hot_loop = thread::spawn(move || {
+            let receiver = receiver.lock().expect("");
+            let runtime = runtime.lock().expect("");
+
+            //loop {
+            let mut client = client.lock().expect("");
             let data: Vec<u8> = receiver.try_iter().collect();
             let entries = vec![LogEntry { log: data }];
-            client
-                .send_records(futures_util::stream::iter(entries))
-                .await
-                .expect("Couldn't send records");
-            //           }
+            if entries.len() > 0 {
+                let send_future = client.send_records(futures_util::stream::iter(entries));
+                runtime.block_on(async move {
+                    send_future.await.expect("Couldn't send records");
+                });
+            }
+            //}
         });
+        hot_loop.join().expect("join hot loop");
     }
-    pub fn target(&self) -> Target {
+    pub fn target() -> Target {
+        let spectate = Spectate::new();
         //before we send back the Target
-        Target::Pipe(Box::new(LogTarget(self.sender.clone())))
+        Target::Pipe(Box::new(LogTarget(spectate)))
     }
 
     fn init(
@@ -101,7 +105,7 @@ impl Spectate {
 }
 
 #[derive(Debug, Clone)]
-struct LogTarget(Sender<u8>);
+struct LogTarget(Spectate);
 
 impl LogTarget {}
 
@@ -109,8 +113,9 @@ impl io::Write for LogTarget {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         //do we need to send to a channel here or can we simply block on a call?
         for char in buf {
-            self.0.send(*char).ok();
+            self.0.sender.send(*char).ok();
         }
+        self.0.flush();
         Ok(buf.len())
     }
 
